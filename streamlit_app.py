@@ -33,21 +33,108 @@ if uploaded_file:
         df = pd.read_excel(uploaded_file)
     
     if 'Fábrica' in df.columns:
+        # Filtrar por Soldadura Nueva
         df_sn = df[df['Fábrica'] == 'Soldadura Nueva'].copy()
+        
+        # EXCLUSIÓN DE MÁQUINAS 1, 2 Y 3
+        maquinas_excluidas = ['Celda 01 Fumis', 'Celda 02 Fumis', 'Celda 03 Fumis']
+        df_sn = df_sn[~df_sn['Máquina'].isin(maquinas_excluidas)]
+        
         df_sn['Fecha Inicio'] = pd.to_datetime(df_sn['Fecha Inicio'], errors='coerce')
         df_sn['Fecha Fin'] = pd.to_datetime(df_sn['Fecha Fin'], errors='coerce')
         
-        # BLINDAJE CONTRA EL ERROR NaT: Descartar registros sin fecha de inicio
+        # Descartar registros sin fecha de inicio para evitar errores NaT
         df_sn = df_sn.dropna(subset=['Fecha Inicio']) 
-        
         df_sn['Fecha'] = df_sn['Fecha Inicio'].dt.date
         
-        st.success(f"Datos de 'Soldadura Nueva' cargados. {len(df_sn)} registros encontrados.")
+        st.success(f"Datos cargados (Excluyendo Celdas 1, 2 y 3). {len(df_sn)} registros válidos encontrados.")
 
         # ==========================================
-        # MOTOR DE PDF ACTUALIZADO
+        # FUNCIÓN DE FORMATO DE MINUTOS
         # ==========================================
-        def generar_pdf_v3(df_datos):
+        def format_mins(minutos):
+            if pd.isnull(minutos): return "00:00 hs"
+            h = int(minutos // 60)
+            m = int(minutos % 60)
+            return f"{h:02d}:{m:02d} hs"
+
+        # ==========================================
+        # MOTOR 1: PDF DE RESUMEN EJECUTIVO
+        # ==========================================
+        def generar_pdf_resumen(df_datos):
+            pdf = FPDF()
+            pdf.set_auto_page_break(auto=True, margin=15)
+            pdf.add_page()
+            
+            maquinas = sorted(df_datos['Máquina'].dropna().unique())
+
+            # Encabezado General
+            pdf.set_font("Arial", 'B', 20)
+            pdf.set_text_color(139, 26, 26)
+            pdf.cell(0, 12, txt="FAMMA", ln=True)
+            pdf.set_font("Arial", 'B', 12)
+            pdf.set_text_color(100, 100, 100)
+            pdf.cell(0, 6, txt="REPORTE GERENCIAL: RESUMEN EJECUTIVO DE CELDAS RENAULT", ln=True)
+            pdf.ln(8)
+            
+            pdf.set_font("Arial", 'B', 14)
+            pdf.set_text_color(139, 26, 26)
+            pdf.cell(0, 10, txt="RESUMEN DIARIO POR MÁQUINA (TIEMPOS Y PIEZAS)", ln=True)
+            pdf.ln(3)
+            
+            for m in maquinas:
+                pdf.set_font("Arial", 'B', 11)
+                pdf.set_text_color(139, 26, 26)
+                pdf.cell(0, 8, txt=f"Máquina: {m}", ln=True)
+                
+                # Encabezado tabla resumen
+                pdf.set_font("Arial", 'B', 8)
+                pdf.set_text_color(255, 255, 255)
+                pdf.set_fill_color(139, 26, 26)
+                pdf.cell(18, 7, "Fecha", 1, 0, 'C', True)
+                pdf.cell(13, 7, "Inicio", 1, 0, 'C', True)
+                pdf.cell(13, 7, "Cierre", 1, 0, 'C', True)
+                pdf.cell(16, 7, "T. Prod", 1, 0, 'C', True)
+                pdf.cell(16, 7, "T. Parada", 1, 0, 'C', True)
+                pdf.cell(114, 7, "Piezas Producidas", 1, 1, 'C', True)
+                
+                pdf.set_font("Arial", '', 7)
+                pdf.set_text_color(0, 0, 0)
+                fechas_m = sorted(df_datos[df_datos['Máquina'] == m]['Fecha'].dropna().unique())
+                
+                for f in fechas_m:
+                    temp = df_datos[(df_datos['Máquina'] == m) & (df_datos['Fecha'] == f)]
+                    h_ini = temp['Fecha Inicio'].min().strftime('%H:%M')
+                    h_fin = temp['Fecha Fin'].max().strftime('%H:%M')
+                    
+                    t_prod_mins = temp[temp['Evento'] == 'Producción']['Tiempo (Min)'].sum()
+                    t_parada_mins = temp[temp['Evento'] != 'Producción']['Tiempo (Min)'].sum()
+                    
+                    productos_list = []
+                    for col in ['Producto 1', 'Producto 2', 'Producto 3', 'Producto 4', 'Producto 5']:
+                        if col in temp.columns:
+                            prods = temp[col].dropna().unique()
+                            for p in prods:
+                                if str(p).strip() != "" and str(p) not in productos_list:
+                                    productos_list.append(str(p))
+                    
+                    piezas_str = " / ".join(productos_list) if productos_list else "Sin registro"
+                    piezas_str = piezas_str.encode('latin-1', 'replace').decode('latin-1')
+                    
+                    pdf.cell(18, 6, f.strftime('%d/%m/%Y'), 1, 0, 'C')
+                    pdf.cell(13, 6, h_ini, 1, 0, 'C')
+                    pdf.cell(13, 6, h_fin, 1, 0, 'C')
+                    pdf.cell(16, 6, format_mins(t_prod_mins), 1, 0, 'C')
+                    pdf.cell(16, 6, format_mins(t_parada_mins), 1, 0, 'C')
+                    pdf.cell(114, 6, piezas_str[:85], 1, 1, 'L')
+                pdf.ln(5)
+                
+            return pdf.output(dest='S').encode('latin-1')
+
+        # ==========================================
+        # MOTOR 2: PDF DETALLADO (ÍNDICE + HORA A HORA)
+        # ==========================================
+        def generar_pdf_detalle(df_datos):
             pdf = FPDF()
             pdf.set_auto_page_break(auto=True, margin=15)
             
@@ -66,7 +153,7 @@ if uploaded_file:
             pdf.cell(0, 12, txt="FAMMA", ln=True)
             pdf.set_font("Arial", 'B', 12)
             pdf.set_text_color(100, 100, 100)
-            pdf.cell(0, 6, txt="REPORTE GERENCIAL: CELDAS NUEVAS RENAULT", ln=True)
+            pdf.cell(0, 6, txt="REPORTE GERENCIAL: DETALLE OPERATIVO CELDAS RENAULT", ln=True)
             pdf.ln(10)
             
             pdf.set_font("Arial", 'B', 14)
@@ -86,40 +173,6 @@ if uploaded_file:
                     pdf.cell(0, 5, txt=f"Detalle del dia {f.strftime('%d/%m/%Y')}", ln=True, link=links_dict[m][f])
                 pdf.ln(2)
 
-            # --- PÁGINA 2: RESUMEN GENERAL DE HORARIOS ---
-            pdf.add_page()
-            pdf.set_font("Arial", 'B', 14)
-            pdf.set_text_color(139, 26, 26)
-            pdf.cell(0, 10, txt="RESUMEN GENERAL DE HORARIOS POR MÁQUINA", ln=True)
-            pdf.ln(5)
-            
-            for m in maquinas:
-                pdf.set_font("Arial", 'B', 11)
-                pdf.set_text_color(139, 26, 26)
-                pdf.cell(0, 8, txt=f"Cronograma: {m}", ln=True)
-                
-                # Encabezado tabla resumen
-                pdf.set_font("Arial", 'B', 9)
-                pdf.set_text_color(255, 255, 255)
-                pdf.set_fill_color(139, 26, 26)
-                pdf.cell(40, 7, "Fecha", 1, 0, 'C', True)
-                pdf.cell(40, 7, "Hora Inicio", 1, 0, 'C', True)
-                pdf.cell(40, 7, "Hora Cierre", 1, 1, 'C', True)
-                
-                pdf.set_font("Arial", '', 9)
-                pdf.set_text_color(0, 0, 0)
-                # AQUÍ APLICAMOS LA CORRECCIÓN .dropna()
-                fechas_m = sorted(df_datos[df_datos['Máquina'] == m]['Fecha'].dropna().unique())
-                
-                for f in fechas_m:
-                    temp = df_datos[(df_datos['Máquina'] == m) & (df_datos['Fecha'] == f)]
-                    h_ini = temp['Fecha Inicio'].min().strftime('%H:%M')
-                    h_fin = temp['Fecha Fin'].max().strftime('%H:%M')
-                    pdf.cell(40, 6, f.strftime('%d/%m/%Y'), 1, 0, 'C')
-                    pdf.cell(40, 6, h_ini, 1, 0, 'C')
-                    pdf.cell(40, 6, h_fin, 1, 1, 'C')
-                pdf.ln(5)
-
             # --- PÁGINAS DETALLADAS ---
             for m in maquinas:
                 fechas = sorted(list(links_dict[m].keys()))
@@ -128,14 +181,13 @@ if uploaded_file:
                     pdf.set_link(links_dict[m][f])
                     df_mf = df_datos[(df_datos['Máquina'] == m) & (df_datos['Fecha'] == f)].copy().sort_values('Fecha Inicio')
                     
-                    # Encabezado por día
                     pdf.set_font("Arial", 'B', 14)
                     pdf.set_text_color(139, 26, 26)
                     pdf.cell(0, 8, txt=f"MÁQUINA: {m} | DÍA: {f.strftime('%d/%m/%Y')}", ln=True)
                     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
                     pdf.ln(5)
 
-                    # 1. TRAZABILIDAD HORA A HORA (Real)
+                    # 1. TRAZABILIDAD HORA A HORA
                     pdf.set_font("Arial", 'B', 11)
                     pdf.set_text_color(50, 50, 50)
                     pdf.cell(0, 7, txt="1. Trazabilidad de Operarios (Hora por Hora)", ln=True)
@@ -147,7 +199,7 @@ if uploaded_file:
                     pdf.set_text_color(255, 255, 255)
                     pdf.set_fill_color(139, 26, 26)
                     pdf.cell(50, 6, "Franja Horaria", 1, 0, 'C', True)
-                    pdf.cell(130, 6, "Operador(es) Detectado(s)", 1, 1, 'C', True)
+                    pdf.cell(140, 6, "Operador(es) Detectado(s)", 1, 1, 'C', True)
                     
                     pdf.set_font("Arial", '', 8)
                     pdf.set_text_color(0, 0, 0)
@@ -161,10 +213,10 @@ if uploaded_file:
                         ops_text = " / ".join(ops) if len(ops) > 0 else "Sin registro"
                         
                         pdf.cell(50, 6, f"{h_base:02d}:00 a {h_base+1:02d}:00", 1, 0, 'C')
-                        pdf.cell(130, 6, ops_text[:85].encode('latin-1', 'replace').decode('latin-1'), 1, 1, 'L')
+                        pdf.cell(140, 6, ops_text[:95].encode('latin-1', 'replace').decode('latin-1'), 1, 1, 'L')
                     pdf.ln(5)
 
-                    # 2. LISTADO CRONOLÓGICO DE EVENTOS (Incluyendo Producción)
+                    # 2. LISTADO CRONOLÓGICO DE EVENTOS
                     pdf.set_font("Arial", 'B', 11)
                     pdf.set_text_color(50, 50, 50)
                     pdf.cell(0, 7, txt="2. Listado de Eventos Completo (Producción + Paradas)", ln=True)
@@ -174,7 +226,7 @@ if uploaded_file:
                     pdf.cell(15, 6, "Inicio", 1, 0, 'C', True)
                     pdf.cell(15, 6, "Fin", 1, 0, 'C', True)
                     pdf.cell(30, 6, "Tipo", 1, 0, 'C', True)
-                    pdf.cell(110, 6, "Detalle del Sistema", 1, 0, 'C', True)
+                    pdf.cell(118, 6, "Detalle del Sistema", 1, 0, 'C', True)
                     pdf.cell(12, 6, "Min", 1, 1, 'C', True)
                     
                     pdf.set_font("Arial", '', 7)
@@ -199,17 +251,37 @@ if uploaded_file:
                         pdf.cell(15, 5, ini, 1, 0, 'C')
                         pdf.cell(15, 5, fin, 1, 0, 'C')
                         pdf.cell(30, 5, tipo[:18], 1, 0, 'C')
-                        pdf.cell(110, 5, det_str[:75], 1, 0, 'L')
+                        pdf.cell(118, 5, det_str[:85], 1, 0, 'L')
                         pdf.cell(12, 5, minutos, 1, 1, 'C')
                     
                     pdf.set_text_color(0, 0, 0) 
 
             return pdf.output(dest='S').encode('latin-1')
 
-        pdf_final = generar_pdf_v3(df_sn)
-        st.download_button(
-            label="📥 Descargar Reporte PDF Detallado",
-            data=pdf_final,
-            file_name=f"FAMMA_CeldasRenault_{datetime.now().strftime('%Y%m%d')}.pdf",
-            mime="application/pdf"
-        )
+        # ==========================================
+        # BOTONES DE DESCARGA
+        # ==========================================
+        st.markdown("### Seleccione el reporte a descargar:")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            pdf_resumen = generar_pdf_resumen(df_sn)
+            st.download_button(
+                label="📊 Descargar PDF: Resumen Ejecutivo",
+                data=pdf_resumen,
+                file_name=f"FAMMA_Resumen_CeldasRenault_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf"
+            )
+            
+        with col2:
+            pdf_detalle = generar_pdf_detalle(df_sn)
+            st.download_button(
+                label="📝 Descargar PDF: Detalle Operativo e Índice",
+                data=pdf_detalle,
+                file_name=f"FAMMA_Detalle_CeldasRenault_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf"
+            )
+            
+    else:
+        st.error("El archivo no contiene la columna 'Fábrica'. Verifica el formato original.")
