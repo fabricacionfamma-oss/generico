@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 from fpdf import FPDF
 from datetime import datetime, timedelta
 
@@ -40,14 +39,27 @@ if uploaded_file:
         maquinas_excluidas = ['Celda 01 Fumis', 'Celda 02 Fumis', 'Celda 03 Fumis']
         df_sn = df_sn[~df_sn['Máquina'].isin(maquinas_excluidas)]
         
-        df_sn['Fecha Inicio'] = pd.to_datetime(df_sn['Fecha Inicio'], errors='coerce')
-        df_sn['Fecha Fin'] = pd.to_datetime(df_sn['Fecha Fin'], errors='coerce')
+        # ==========================================
+        # PARSEO DE FECHAS BLINDADO (DD/MM/AAAA)
+        # ==========================================
+        # 1. Convertimos todo a texto puro para unificar la columna
+        df_sn['Fecha Inicio'] = df_sn['Fecha Inicio'].astype(str).str.strip()
+        df_sn['Fecha Fin'] = df_sn['Fecha Fin'].astype(str).str.strip()
         
-        # Descartar registros sin fecha de inicio para evitar errores NaT
+        # 2. Parseamos obligando a leer el Día primero y a normalizar
+        df_sn['Fecha Inicio'] = pd.to_datetime(df_sn['Fecha Inicio'], dayfirst=True, errors='coerce')
+        df_sn['Fecha Fin'] = pd.to_datetime(df_sn['Fecha Fin'], dayfirst=True, errors='coerce')
+        
+        # Validación en pantalla para auditar si se pierden filas
+        registros_totales = len(df_sn)
         df_sn = df_sn.dropna(subset=['Fecha Inicio']) 
+        registros_validos = len(df_sn)
         df_sn['Fecha'] = df_sn['Fecha Inicio'].dt.date
         
-        st.success(f"Datos cargados (Excluyendo Celdas 1, 2 y 3). {len(df_sn)} registros válidos encontrados.")
+        st.success(f"Datos cargados (Excluyendo Celdas 1, 2 y 3). {registros_validos} registros válidos encontrados.")
+        
+        if registros_totales != registros_validos:
+            st.warning(f"⚠️ Atención: Se ocultaron {registros_totales - registros_validos} filas porque su fecha estaba en blanco o el sistema original no la registró correctamente.")
 
         # ==========================================
         # FUNCIÓN DE FORMATO DE MINUTOS
@@ -270,7 +282,7 @@ if uploaded_file:
             st.download_button(
                 label="📊 Descargar PDF: Resumen Ejecutivo",
                 data=pdf_resumen,
-                file_name=f"FAMMA_Resumen_CeldasRenault_{datetime.now().strftime('%Y%m%d')}.pdf",
+                file_name=f"FAMMA_Resumen_CeldasRenault_{datetime.now().strftime('%d%m%Y')}.pdf",
                 mime="application/pdf"
             )
             
@@ -279,7 +291,7 @@ if uploaded_file:
             st.download_button(
                 label="📝 Descargar PDF: Detalle Operativo e Índice",
                 data=pdf_detalle,
-                file_name=f"FAMMA_Detalle_CeldasRenault_{datetime.now().strftime('%Y%m%d')}.pdf",
+                file_name=f"FAMMA_Detalle_CeldasRenault_{datetime.now().strftime('%d%m%Y')}.pdf",
                 mime="application/pdf"
             )
             
