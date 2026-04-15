@@ -36,6 +36,10 @@ if uploaded_file:
         df_sn = df[df['Fábrica'] == 'Soldadura Nueva'].copy()
         df_sn['Fecha Inicio'] = pd.to_datetime(df_sn['Fecha Inicio'], errors='coerce')
         df_sn['Fecha Fin'] = pd.to_datetime(df_sn['Fecha Fin'], errors='coerce')
+        
+        # BLINDAJE CONTRA EL ERROR NaT: Descartar registros sin fecha de inicio
+        df_sn = df_sn.dropna(subset=['Fecha Inicio']) 
+        
         df_sn['Fecha'] = df_sn['Fecha Inicio'].dt.date
         
         st.success(f"Datos de 'Soldadura Nueva' cargados. {len(df_sn)} registros encontrados.")
@@ -104,7 +108,9 @@ if uploaded_file:
                 
                 pdf.set_font("Arial", '', 9)
                 pdf.set_text_color(0, 0, 0)
-                fechas_m = sorted(df_datos[df_datos['Máquina'] == m]['Fecha'].unique())
+                # AQUÍ APLICAMOS LA CORRECCIÓN .dropna()
+                fechas_m = sorted(df_datos[df_datos['Máquina'] == m]['Fecha'].dropna().unique())
+                
                 for f in fechas_m:
                     temp = df_datos[(df_datos['Máquina'] == m) & (df_datos['Fecha'] == f)]
                     h_ini = temp['Fecha Inicio'].min().strftime('%H:%M')
@@ -150,7 +156,6 @@ if uploaded_file:
                         franja_ini = datetime.combine(f, datetime.min.time()) + timedelta(hours=h_base)
                         franja_fin = franja_ini + timedelta(hours=1)
                         
-                        # Buscar operadores que tuvieron algún registro solapando esta hora
                         mask = (df_mf['Fecha Inicio'] < franja_fin) & (df_mf['Fecha Fin'] > franja_ini)
                         ops = df_mf[mask]['Operador'].dropna().unique()
                         ops_text = " / ".join(ops) if len(ops) > 0 else "Sin registro"
@@ -176,17 +181,15 @@ if uploaded_file:
                     pdf.set_text_color(0, 0, 0)
                     
                     for _, row in df_mf.iterrows():
-                        # Lógica de color de texto: rojo si es FALLA, gris si es PRODUCCION
                         if row['Evento'] == 'Producción':
                             pdf.set_text_color(100, 100, 100)
                         else:
                             pdf.set_text_color(0, 0, 0)
                             
                         ini = row['Fecha Inicio'].strftime('%H:%M')
-                        fin = row['Fecha Fin'].strftime('%H:%M')
+                        fin = row['Fecha Fin'].strftime('%H:%M') if pd.notnull(row['Fecha Fin']) else ini
                         tipo = str(row['Nivel Evento 1']).encode('latin-1', 'replace').decode('latin-1')
                         
-                        # Prioridad de detalle: N3 -> N2 -> Evento
                         det = row['Nivel Evento 3'] if pd.notnull(row['Nivel Evento 3']) else row['Nivel Evento 2']
                         if pd.isnull(det): det = row['Evento']
                         det_str = str(det).encode('latin-1', 'replace').decode('latin-1')
@@ -199,11 +202,10 @@ if uploaded_file:
                         pdf.cell(110, 5, det_str[:75], 1, 0, 'L')
                         pdf.cell(12, 5, minutos, 1, 1, 'C')
                     
-                    pdf.set_text_color(0, 0, 0) # Reset color
+                    pdf.set_text_color(0, 0, 0) 
 
             return pdf.output(dest='S').encode('latin-1')
 
-        # Botón de descarga
         pdf_final = generar_pdf_v3(df_sn)
         st.download_button(
             label="📥 Descargar Reporte PDF Detallado",
